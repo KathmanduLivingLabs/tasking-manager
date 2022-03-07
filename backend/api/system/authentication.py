@@ -10,10 +10,9 @@ from backend.services.users.authentication_service import (
 
 @osm.tokengetter
 def get_oauth_token():
-    """ Required by Flask-OAuthlib.  Pulls oauth token from the session so we can make authenticated requests"""
-    if "osm_oauth" in session:
-        resp = session["osm_oauth"]
-        return resp["oauth_token"], resp["oauth_token_secret"]
+    """ Required by Flask-OAuthlib.  Pulls access token from the session so we can make authenticated requests"""
+    if "osm_token" in session:
+       return session.get('osm_token')
 
 
 class SystemAuthenticationLoginAPI(Resource):
@@ -35,12 +34,12 @@ class SystemAuthenticationLoginAPI(Resource):
           200:
             description: oauth token params
         """
-        callback_url = request.args.get("callback_url", None)
-        if callback_url is None:
-            callback_url = current_app.config["APP_BASE_URL"]
-        params = AuthenticationService.generate_authorize_url(callback_url)
+        redirect_uri = request.args.get("redirect_uri", None)
+        if redirect_uri is None:
+            redirect_uri = current_app.config["APP_BASE_URL"]+"/authorized"
+        url = AuthenticationService.generate_authorize_url(redirect_uri)
 
-        return params, 200
+        return url, 200
 
 
 class SystemAuthenticationCallbackAPI(Resource):
@@ -52,6 +51,16 @@ class SystemAuthenticationCallbackAPI(Resource):
           - system
         produces:
           - application/json
+        parameters:
+            - in: query
+              name: code
+              description: authentication code obtained after user authorization
+              type: string
+            - in: query
+              name: callback_url
+              description: Route to redirect user once authenticated, required by flask_oauthlib
+              type: string
+              default: /take/me/here
         responses:
           302:
             description: Redirects to login page, or login failed page
@@ -62,24 +71,19 @@ class SystemAuthenticationCallbackAPI(Resource):
         """
 
         # Create session from requests. TODO: Do not use flask session
-        token_secret = request.args.get("oauth_token_secret", None)
-        if token_secret is None:
-            return {"Error": "Missing oauth_token_secret parameter"}, 500
+        authorization_code = request.args.get("code", None)
+        if authorization_code is None:
+            return {"Error": "Missing code parameter"}, 500
 
         email = request.args.get("email_address", None)
-        session["osm_oauthtok"] = (
-            request.args.get("oauth_token"),
-            request.args.get("oauth_token_secret"),
-        )
+        session["osm_oauthredir"] = request.args.get("redirect_uri")
 
         osm_resp = osm.authorized_response()
         if osm_resp is None:
             current_app.logger.critical("No response from OSM")
             return redirect(AuthenticationService.get_authentication_failed_url())
         else:
-            session[
-                "osm_oauth"
-            ] = osm_resp  # Set OAuth details in the session temporarily
+            session["osm_token"] = osm_resp  # Set OAuth details in the session temporarily
         osm_response = osm.request(
             "user/details"
         )  # Get details for the authenticating user
